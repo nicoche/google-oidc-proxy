@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -12,29 +13,33 @@ import (
 
 var (
 	app            = kingpin.New("google-oidc-proxy", "Forward proxy to IAP protected resources")
-	address        = app.Flag("address", "where the server is listening").Default("localhost:8080").OverrideDefaultFromEnvar("ADDRESS").String()
-	targetHost     = app.Flag("target_host", "where to proxy request to").Required().OverrideDefaultFromEnvar("TARGET_HOST").String()
-	targetAudience = app.Flag("target_audience", "audience for generated id token").Required().OverrideDefaultFromEnvar("TARGET_AUDIENCE").String()
+	address        = app.Flag("address", "where the server is listening").Default("localhost:8080").Envar("ADDRESS").String()
+	targetHost     = app.Flag("target_host", "where to proxy request to").Required().Envar("TARGET_HOST").String()
+	targetAudience = app.Flag("target_audience", "audience for generated id token").Required().Envar("TARGET_AUDIENCE").String()
 )
 
 func main() {
 	_, err := app.Parse(os.Args[1:])
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("could not parse command line arguments", slog.String("error", err.Error()))
+		return
 	}
 
-	// This is needed by GCP libs; fail early if it's not there
+	// If user set GOOGLE_APPLICATION_CREDENTIALS, use it, otherwise default to Application Default Credentials (ADC) flow.
 	serviceAccountPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 	if len(serviceAccountPath) == 0 {
-		log.Fatal("please set GOOGLE_APPLICATION_CREDENTIALS")
+		slog.Info("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set, defaulting to ADC flow")
 	}
 
 	ctx := context.Background()
 	handler, err := handler.NewHandler(ctx, *targetHost, *targetAudience)
 	if err != nil {
-		log.Fatalf("could not init handler: %+v", err)
+		slog.Error("could not init handler", slog.String("error", err.Error()))
+		return
 	}
 
 	log.Printf("listening on %s...\n", *address)
-	http.ListenAndServe(*address, handler)
+	if err := http.ListenAndServe(*address, handler); err != nil {
+		slog.Error("could not start server", slog.String("error", err.Error()))
+	}
 }
